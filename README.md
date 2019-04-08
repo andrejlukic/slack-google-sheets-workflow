@@ -4,7 +4,7 @@
 
 Script does the following:
 
-1. Downloads message history from selected Slack channel [Thank you Chandler!](https://gist.github.com/Chandler/fb7a070f52883849de35)
+1. Downloads message history from selected Slack channel ([Thank you Chandler for this solution!](https://gist.github.com/Chandler/fb7a070f52883849de35))
 2. Uses Pandas to analyze the downloaded messages
 3. Update a specified Google Spreadsheet updating each students progress
 4. Use a Slack bot to send reminders to Slack users
@@ -14,7 +14,7 @@ Script does the following:
 
 #### Configure Slack bot access
 
-+ Install a Slack bot into your Slack workspace. (https://api.slack.com/apps)
++ Install a Slack bot into your Slack workspace. [slack.com/apps] (https://api.slack.com/apps)
 + From the menu select "Add features and functionality", then select "Bots", add a name
 + From the menu select "OAuth & Permissions", scroll down to "Scopes". Add:
   - channels:history
@@ -28,9 +28,10 @@ Script does the following:
   - Set the 'SLACK_CHANNEL_NAME' param to be the name of your Slack channel
 + Invite the bot to your channel
 
-#### Configure Google API access (nice instructions here: https://gspread.readthedocs.io/en/latest/oauth2.html, except use Google Sheets API)
+#### Configure Google API access 
+([littel outdated but valid instructions](https://gspread.readthedocs.io/en/latest/oauth2.html), except add Google Sheets API)
 
-+ Open the Google Developers Console and create a new project (or select the one you have.) [https://console.developers.google.com/project]
++ Open the [Google Developers Console and create a new project (or select the one you have.)](https://console.developers.google.com/project)
 + Under "Enable APIs and services", in the API enable "Google Sheets API".
 + Go to “Credentials” and choose “New Credentials > Service Account Key”.
 + Download the JSON files with credentials and put it in the app directory
