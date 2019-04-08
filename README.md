@@ -4,10 +4,10 @@
 
 Script does the following:
 
-1. Downloads message history from selected Slack channel ([Thank you Chandler for this solution!](https://gist.github.com/Chandler/fb7a070f52883849de35))
+1. Using Slacker to download message history from selected Slack channel ([Thank you Chandler for this solution!](https://gist.github.com/Chandler/fb7a070f52883849de35))
 2. Uses Pandas to analyze the downloaded messages
-3. Update a specified Google Spreadsheet updating each students progress
-4. Use a Slack bot to send reminders to Slack users
+3. Use [gspread](https://github.com/burnash/gspread) to update a specified Google Spreadsheet updating each students progress
+4. Use a Slack bot [Slackclient](https://github.com/slackapi/python-slackclient) to send reminders to Slack users
 5. Additionally send email reminders to Slack users
 
 ### Installation instructions
