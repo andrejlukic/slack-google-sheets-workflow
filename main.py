@@ -61,7 +61,9 @@ def update_messages(config):
                 json.dump({'channel_info': channelInfo, 'messages': messages }, outFile, indent=4)
     return info
 
-def load_messages(config, date_from):
+def load_messages(config, date_from, date_to):
+    if(date_from and date_to):
+        print('Filtering only messages from {} until (but not including) {}'.format(date_from, date_to))
     src = r'{0}/{1}.json'.format(config['APP']['DATA_DIR'], config['WORKFLOW']['SLACK_CHANNEL_NAME'])    
     with open(src) as data_file:    
         d = json.load(data_file)  
@@ -75,6 +77,10 @@ def load_messages(config, date_from):
         #print('Filtering on {0}'.format(date_from))
         #print(df['ts'].apply(lambda x: dt.datetime.fromtimestamp(int(x.split('.')[0]))))
             df = df[df['date'] >= date_from]
+        if(date_to):
+        #print('Filtering on {0}'.format(date_to))
+        #print(df['ts'].apply(lambda x: dt.datetime.fromtimestamp(int(x.split('.')[0]))))
+            df = df[df['date'] < date_to]
         #print(df['date'])
         #df['user'] = df['user'].astype('str')
         #df['parent_user_id'] = df['parent_user_id'].astype('str')
@@ -86,23 +92,29 @@ def list_users_in_thread(df):
     return df[df['user'].notnull()]['user'].unique()
 
 def list_users_who_posted_attachment(df):
-    att = df[df['upload'].notnull()]
-    users = att['user'].unique()
-    return att, set(users)
+    try:
+        att = df[df['upload'].notnull()]
+        users = att['user'].unique()
+        return att, set(users)
+    except:
+        return None, set()
 
 # TODO: add condition, that the parent message has attachment.
 def list_users_who_gave_feedback(df, l=1, n=1):
-    replies = df[df['parent_user_id'].notnull()]
-    # exclude reply to your own thread
-    replies = replies[replies['parent_user_id'] != replies['user']]    
-    #print(replies[['user','text', 'date']])
-    if(l > 1):
-        replies = replies[replies['text'].str.len() > l]
-    replies = replies.groupby('user').agg({'client_msg_id': 'count'})  
-    #print(replies)  
-    if(n>1):
-        replies = replies[replies['client_msg_id'] >= n]
-    return set(replies.index)
+    try:
+        replies = df[df['parent_user_id'].notnull()]
+        # exclude reply to your own thread
+        replies = replies[replies['parent_user_id'] != replies['user']]    
+        #print(replies[['user','text', 'date']])
+        if(l > 1):
+            replies = replies[replies['text'].str.len() > l]
+        replies = replies.groupby('user').agg({'client_msg_id': 'count'})  
+        #print(replies)  
+        if(n>1):
+            replies = replies[replies['client_msg_id'] >= n]
+        return set(replies.index)
+    except:
+        return set()
 
 def list_users_who_did_not_give_feedback(user_list, df, l=1, n=1):
     t = list_users_who_gave_feedback(df, l, n)
@@ -191,20 +203,28 @@ def findColumn(wks, cname):
         return cell.col
     return None
 
-def updateStatusCol(config, wks, usern, update_text):
+def updateStatusCol(num_cycle, config, wks, usern, update_text):
     row = findUserRow(wks, usern)
-    col = findColumn(wks, config['SPREADSHEET']['STATUS_COLUMN'])
-    if(row and col):        
-        wks.update_cell(row, col, update_text)
+    col = findColumn(wks, '{}_{}'.format(config['SPREADSHEET']['STATUS_COLUMN'], num_cycle))
+    if(row and col):
+        current_val = wks.cell(row, col).value
+        if(len(current_val.strip()) == 0):
+            wks.update_cell(row, col, update_text)
+        else:
+            print('Skip {} already <{}>'.format(usern, current_val))
         return 1
     else:
         return 0
 # dela
-def updateFeedbackCol(config, wks, usern, update_text):
+def updateFeedbackCol(num_cycle, config, wks, usern, update_text):
     row = findUserRow(wks, usern)
-    col = findColumn(wks, config['SPREADSHEET']['FEEDBACK_COLUMN'])
-    if(row and col):        
-        wks.update_cell(row, col, update_text)
+    col = findColumn(wks, '{}_{}'.format(config['SPREADSHEET']['FEEDBACK_COLUMN'], num_cycle))
+    if(row and col):  
+        current_val = wks.cell(row, col).value  
+        if(len(current_val.strip()) == 0):    
+            wks.update_cell(row, col, update_text)
+        else:
+            print('Skip {} already <{}>'.format(usern, current_val))
         return 1
     else:
         return 0   
@@ -227,15 +247,35 @@ def botReminder(config, ufeed):
     else:
         print("Connection failed. Exception traceback printed above.")
         return -1
-def run():
+    
+def determineDates(projectstartstr, nowstr = None):
+    projstart = parser.parse(projectstartstr)
+    now = dt.datetime.now()
+    if(nowstr):
+        now = parser.parse(nowstr)
+    projectend = projstart + relativedelta(days=7*6)
+    days_into_project = (now - projstart).days
+    # print('DEBUG: days into project = {}'.format(days_into_project))
+    num_cycle = days_into_project // 7 + 1
+    date_assignment = projstart + relativedelta(days=(num_cycle-1)*7 + 5)
+    date_feedback = projstart + relativedelta(days=(num_cycle-1)*7 + 6)
+    date_cycleend = projstart + relativedelta(days=(num_cycle-1)*7 + 7)
+    date_cyclestarts = projstart + relativedelta(days=(num_cycle-1)*7)
+    return {'num_cycle':num_cycle, 'dt_assignemnt':date_assignment,'dt_feedback':date_feedback,'dt_cycleend':date_cycleend,'dt_cyclestart':date_cyclestarts, 'project_ends':projectend}
+    
+def run(nowstr=None):
     print('Starting script')
+    now = dt.datetime.now()
+    if(nowstr):        
+        now = parser.parse(nowstr)
+        print('!!! DEBUG MODE: Forcing current date to {}'.format(now))
     config = cp.ConfigParser()
     config.read(CONFIG_FILE)
-
+    
     disable_all_reminders = config['REMINDERS']['DISABLE_ALL'] != 'False'
     
     if(disable_all_reminders):
-        print('Reminders disabled')
+        print('All reminders are disabled.')
     
     user_list = {}
     for u,uemail in config['STUDENTS'].items():
@@ -243,33 +283,40 @@ def run():
 
     print('Participants: {0}'.format(user_list.keys()))
     
-    start = parser.parse(config['WORKFLOW']['ASSIGNMENT_START_DATE'])
-    end = start + relativedelta(days=5)
-    end2 = start + relativedelta(days=6)
-    end3 = start + relativedelta(days=7)
-    print('End assigment {0} End feedback {1} End spreadsheet updates {2}'.format(end,end2, end3))
-    diff = end - dt.datetime.now()
-    diff2 = end2 - dt.datetime.now()
-    diff3 = end3 - dt.datetime.now()
-    print(diff2)
-    days_left = diff.days
-    hours_left = diff.seconds // 3600
-    days_left2 = diff2.days
-    hours_left2 = diff2.seconds // 3600
-    days_left3 = diff3.days
-    hours_left3 = diff3.seconds // 3600
+    project_start = parser.parse(config['WORKFLOW']['ASSIGNMENT_START_DATE'])
+    dates = determineDates(config['WORKFLOW']['ASSIGNMENT_START_DATE'], nowstr)
+    end_assign = dates['dt_assignemnt']
+    end_feedb = dates['dt_feedback']
+    end_cycle = dates['dt_cycleend']
+    start_cycle = dates['dt_cyclestart']
+    num_cycle = dates['num_cycle']
+    end_of_project = dates['project_ends']
+    print('Project starts = {} Project ends = {} Cycle = {} Cycle starts = {}, cycle ends = {} Assigment due = {} Feedback due = {} Spreadsheet updates end = {}'.format(project_start, end_of_project,num_cycle, start_cycle, end_cycle, end_assign,end_feedb, end_cycle))
+    diff_assign = end_assign - now
+    diff_feedback = end_feedb - now
+    diff_cycle = end_cycle - now
+    assign_days_left = diff_assign.days
+    assign_hours_left = diff_assign.seconds // 3600
+    feedack_days_left = diff_feedback.days
+    feedack_hours_left = diff_feedback.seconds // 3600
+    cycle_days_left = diff_cycle.days
+    cycle_hours_left = diff_cycle.seconds // 3600
 
-    if(days_left3 < 0):
-        print('Assignment and feedback due date ended on {0} and {1}. Hand-in closed on {2} Exiting ...'.format(end,end2,end3))
+    if(project_start > now):
+        print('Project not yet begun. Begins on {0}. Exiting ...'.format(project_start))
         return -1
     
-    print('Check assignment {0} - {1}, {2} days and {3} hours to go'.format(start,end, days_left, hours_left))
+    if(end_of_project < now):
+        print('Project ended on {0}. Exiting ...'.format(end_of_project))
+        return -1
+    
+    print('Check assignment for cycle {}, which starts on {} ends on {}: {} days and {} hours to go'.format(num_cycle, start_cycle, end_cycle, assign_days_left, assign_hours_left))
     # 1. Download new messages
-    print("Downlading {0} history ...".format(config['WORKFLOW']['SLACK_CHANNEL_NAME']))
+    print("Downlading message history from {0} ...".format(config['WORKFLOW']['SLACK_CHANNEL_NAME']))
     info = update_messages(config)
     print("... downloaded {0} messages".format(info))
-    # 1. Load message history        
-    df = load_messages(config, start)
+    # 1. Load message history only from the project_start of the cycle
+    df = load_messages(config, start_cycle, end_cycle)
     # 2. Check attachments
     ua = list_users_who_did_not_post_attachment(user_list, df)
     print('Attachments still pending for: {0}'.format(','.join(ua)))
@@ -281,7 +328,7 @@ def run():
     uf2 = list_users_who_did_not_give_feedback(user_list, df, int(config['WORKFLOW']['MIN_REPLY_LENGTH']), 1) 
     print('Feedbacks still pending for: {0}'.format(','.join(uf)))
     # 4. send assignemnt notifications
-    send_assign_notif = days_left == 0 and hours_left < 5
+    send_assign_notif = assign_days_left == 0 and assign_hours_left < 5
     if(not disable_all_reminders and send_assign_notif):
         st = readLog('not')
         if(not ua):
@@ -300,7 +347,7 @@ def run():
             updatelog(log_list, 'not')
 
     # 5. send feedback notifications
-    send_feedback_notif = days_left2 == 0 and hours_left2 <= 2
+    send_feedback_notif = feedack_days_left == 0 and feedack_hours_left <= 2
     if(not disable_all_reminders and send_feedback_notif):
         st = readLog('not')
         if(not uf):
@@ -338,27 +385,27 @@ def run():
     
     # 6. update spreadsheets for assignments / tolerate 12h
     # days_left >= 0 and hours_left >= -12 
-    update_excel = days_left >= -1
+    update_excel = assign_days_left >= -1
     if(update_excel):
         wks = connectGS(config)
         #msg = 'D' if(hours_left>=0) else 'D*'
-        msg = 'D' if(days_left>=0) else 'D*'
+        msg = 'D' if(assign_days_left>=0) else 'D*'
         u = set(user_list.keys())
         good = u - ua
         if(good):
             print('Assignments accomplished for: {0}'.format(','.join(good)))
             for good_user in good:
-                updateStatusCol(config, wks, good_user, msg)
+                updateStatusCol(num_cycle, config, wks, good_user, msg)
     else:
         print('Updating Status column has been already closed (skipping)')
     
     # 7. update spreadsheets for feedbacks / tolerate 12h 
     # update_excel = days_left2 >= 0 and hours_left2 >= -12
-    update_excel = days_left2 >= -1
+    update_excel = feedack_days_left >= -1
     if(update_excel):
         wks = connectGS(config)
         #msg = 'D' if(hours_left>=0) else 'D*'
-        msg = 'D' if(days_left2>=0) else 'D*'
+        msg = 'D' if(feedack_days_left>=0) else 'D*'
         u = set(user_list.keys())
         good = u - uf
         better_than_nothing = u - uf2 - good
@@ -366,14 +413,40 @@ def run():
         if(good):
             print('Feedback accomplished for: {0}'.format(','.join(good)))
             for good_user in good:            
-                updateFeedbackCol(config, wks, good_user, msg)
+                updateFeedbackCol(num_cycle, config, wks, good_user, msg)
         if(better_than_nothing):
             print('More than zero feedbacks accomplished for: {0}'.format(','.join(better_than_nothing)))
             for good_user in better_than_nothing:            
-                updateFeedbackCol(config, wks, good_user, 'P')
+                updateFeedbackCol(num_cycle, config, wks, good_user, 'P')
     else:
         print('Updating Feedback column has been already closed (skipping)')
     return 0
+def test_dates():
+    now = '2019-04-08'
+    test_date = '2019-04-01'
+    nowdate = parser.parse(now)
+    print('testing dates ...start date = {} now = {}'.format(test_date, now))
+    dts = determineDates(test_date, now)
+    diff = dts['dt_assignemnt'] - nowdate
+    diff2 = dts['dt_feedback'] - nowdate
+    diff3 = dts['dt_cycleend'] - nowdate
+    print('Dates all = {}'.format(dts))
+    print('Diff to assignemtn = {}'.format(diff))
+    print('Diff to feedback = {}'.format(diff2))
+    print('Diff to ccleend = {}'.format(diff3))
+    days_left = diff.days
+    hours_left = diff.seconds // 3600
+    days_left2 = diff2.days
+    hours_left2 = diff2.seconds // 3600
+    days_left3 = diff3.days
+    hours_left3 = diff3.seconds // 3600
+    print('days={} hours={}'.format(days_left, hours_left))
+    print('days={} hours={}'.format(days_left2, hours_left2))
+    print('days={} hours={}'.format(days_left3, hours_left3))
+    send_assign_notif = days_left == 0 and hours_left < 5
+    update_excel = days_left >= -1
+    send_feedback_notif = days_left2 == 0 and hours_left2 <= 2
+    print('Send assingment notifications = {}, send feedback notifications = {} update excel = {}'.format(send_assign_notif, send_feedback_notif, update_excel))
 
 def makeLogId(config, userid, actionid):
     return str(parser.parse(config['WORKFLOW']['ASSIGNMENT_START_DATE'])) + '->'+ str(actionid) + '->' + str(userid)
@@ -385,5 +458,8 @@ def checkLog(config, st, userid, actionid):
     return lid in st
     
 
-run()   
+#force_now = '2019-04-16 01:00'
+run()
+#test_dates()
+   
     
